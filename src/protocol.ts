@@ -1,16 +1,5 @@
-/**
- * Protocol constants reverse‑engineered from the Flash client in /scripts.
- * Messages are UTF-8 strings sent over a raw TCP socket (Flash XMLSocket)
- * and are implicitly terminated by a null byte (0x00).
- *
- * Format: [cmd1][cmd2][payload...]
- * - cmd1 and cmd2 are single characters with charCode < 32.
- * - Inside the payload, fields are separated by SEP (charCode = 1).
- */
-
 export const SEP = String.fromCharCode(1);
 
-// Primary command groups (charCode of first byte)
 export const CMD = {
   GAME: String.fromCharCode(5),
   STATE: String.fromCharCode(4),
@@ -19,7 +8,6 @@ export const CMD = {
   SYS: String.fromCharCode(26)
 };
 
-// Second byte command codes (charCode of second byte)
 export const SUB = {
   // STATE (4)
   HEARTBEAT: String.fromCharCode(2),
@@ -146,9 +134,6 @@ export function decodePacket(raw: string): string {
   return `unknown ${c0}:${c1} raw=${label(raw)}`;
 }
 
-/**
- * Split an incoming UTF-8 chunk into complete frames (Flash adds \0).
- */
 export function splitFrames(buffer: Buffer, carry: Buffer = Buffer.alloc(0)): { frames: string[]; rest: Buffer } {
   const data = Buffer.concat([carry, buffer]);
   const frames: string[] = [];
