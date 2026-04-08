@@ -6,6 +6,7 @@ import { PlayerSession } from './session.js';
 import { getDb } from './db.js';
 import { RoomManager } from './roomManager.js';
 import { CMD, SUB, SEP, join } from './protocol.js';
+import { CommandDeps, handleSlashCommand } from './commands.js';
 import crypto from 'crypto';
 import { info, warn } from './logger.js';
 
@@ -76,7 +77,7 @@ createServer(socket => {
   const peerLabel = () => session.name || `player#${session.code}`;
   info(`[${peerLabel()}] peer (${ip ?? 'unknown'}) connected`);
 
-  async function persistSession(roomId: string) {
+  async function persistSession(_session: PlayerSession, roomId: string) {
     try {
       if (!playerId) return;
       const numericRoom = Number.isNaN(Number(roomId)) ? null : Number(roomId);
@@ -95,99 +96,32 @@ createServer(socket => {
     }
   }
 
-  function switchRoom(targetId: string) {
+  function switchRoom(targetSession: PlayerSession, targetId: string) {
     const nextRoom = manager.getOrCreate(targetId || DEFAULT_ROOM);
-    if (added && session.room) {
-      session.room.remove(session);
+    if (added && targetSession.room) {
+      targetSession.room.remove(targetSession);
     }
-    session.room = nextRoom;
-    nextRoom.add(session);
+    targetSession.room = nextRoom;
+    nextRoom.add(targetSession);
     added = true;
-    session.handshake();
+    targetSession.handshake();
   }
 
   function sendSys(session: PlayerSession, text: string) {
     session.send(join(CMD.SYS, SUB.SYS_MSG, [text]));
   }
 
-  const slashHandler = async (s: PlayerSession, cmd: string, args: string[]) => {
-    if (!s.room) {
-      sendSys(s, 'No room assigned yet.');
-      return;
-    }
-    if (cmd === 'help') {
-      sendSys(s, '/room <id>, /map <id>* , /nextmap*, /guide <code|X>*, /kick <code>*, /bc <msg>* (* admin only)');
-      return;
-    }
-        if (cmd === 'ping') {
-      sendSys(s, 'Pong!');
-      return;
-    }
-    if (cmd === 'room') {
-      const id = args[0] || DEFAULT_ROOM;
-      switchRoom(id);
-      sendSys(s, `Room changed to ${id}`);
-      await persistSession(id);
-      return;
-    }
-    if (cmd === 'map') {
-      if (!isAdmin(s.name)) {
-        sendSys(s, 'Admin command only');
-        return;
-      }
-      const id = parseInt(args[0], 10);
-      if (!Number.isFinite(id)) {
-        sendSys(s, 'Usage: /map <id>');
-        return;
-      }
-      s.room.setMap(id);
-      sendSys(s, `Map ${id}`);
-      return;
-    }
-    if (cmd === 'nextmap') {
-        sendSys(s, 'go fuck yourself');
-        return;
-    }
-    if (cmd === 'guide' || cmd === 'chaman') {
-      if (!isAdmin(s.name)) {
-        sendSys(s, 'Admin command only');
-        return;
-      }
-      const arg = args[0];
-      const code = arg === 'X' ? 'X' : parseInt(arg ?? '', 10);
-      if (arg === 'X' || Number.isFinite(code)) {
-        s.room.setChaman(arg === 'X' ? 'X' : (code as number));
-      } else {
-        sendSys(s, 'Usage: /guide <code|X>');
-      }
-      return;
-    }
-    if (cmd === 'kick') {
-      if (!isAdmin(s.name)) {
-        sendSys(s, 'Admin command only');
-        return;
-      }
-      const code = parseInt(args[0] ?? '', 10);
-      const target = Number.isFinite(code) ? s.room.getMember(code) : undefined;
-      if (!target) {
-        sendSys(s, 'Player not found');
-        return;
-      }
-      sendSys(s, `Kick ${target.name}`);
-      target.close();
-      return;
-    }
-    if (cmd === 'bc') {
-      if (!isAdmin(s.name)) {
-        sendSys(s, 'Admin command only');
-        return;
-      }
-      const msg = args.join(' ');
-      s.room.handleRoomBroadcast(s, msg);
-      return;
-    }
-    sendSys(s, `Unknown command: /${cmd}`);
+  const slashDeps: CommandDeps = {
+    defaultRoom: DEFAULT_ROOM,
+    isAdmin,
+    switchRoom,
+    persistSession,
+    sendSys,
+    manager
   };
+
+  const slashHandler = (s: PlayerSession, cmd: string, args: string[]) =>
+    handleSlashCommand(slashDeps, s, cmd, args);
 
   socket.on('data', chunk => {
     session.feed(chunk, async frame => {
@@ -208,7 +142,6 @@ createServer(socket => {
         return;
       }
 
-      // Login / Register packets (SYS group)
       if (frame.charAt(0) === CMD.SYS && frame.charAt(1) === SUB.REGISTER) {
         const [, ...rest] = frame.split(SEP);
         const username = cleanName(rest[0]);
@@ -235,7 +168,7 @@ createServer(socket => {
         room.add(session);
         added = true;
         session.handshake();
-        await persistSession(startRoom);
+        await persistSession(session, startRoom);
         return;
       }
 
@@ -275,7 +208,7 @@ createServer(socket => {
         room.add(session);
         added = true;
         session.handshake();
-        await persistSession(startRoom);
+        await persistSession(session, startRoom);
         return;
       }
 
